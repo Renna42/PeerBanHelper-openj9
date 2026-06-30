@@ -1,0 +1,57 @@
+name: Build PeerBanHelper-openj9 Image
+
+on:
+  schedule:
+    - cron: '29 23 * * 4'
+  workflow_dispatch:
+
+env:
+  SOURCE_IMAGE: "ghostchu/peerbanhelper"
+  TARGET_IMAGE: "renna42/peerbanhelper-openj9"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Get Latest Version Tag from Hub
+        id: get_tag
+        run: |
+          LATEST_TAG=$(curl -s "https://registry.hub.docker.com/v2/repositories/${{ env.SOURCE_IMAGE }}/tags/?page_size=20" | \
+            jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+          
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
+            echo "Warning: Could not auto-detect semantic version tag. Falling back to latest."
+            LATEST_TAG="latest"
+          fi
+          echo "Found latest upstream version: $LATEST_TAG"
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            UPSTREAM_TAG=${{ steps.get_tag.outputs.tag }}
+          tags: |
+            ${{ env.TARGET_IMAGE }}:${{ steps.get_tag.outputs.tag }}
+            ${{ env.TARGET_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
